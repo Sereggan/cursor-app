@@ -5,4 +5,6 @@
  * Запустить main.go :)  
   
 В качестве фреймворка использовал gorilla/websocket  
-https://github.com/gorilla/websocket
+https://github.com/gorilla/websocket  
+взял за основу пример  
+https://github.com/gorilla/websocket/tree/master/examples/chat
