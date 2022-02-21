@@ -164,16 +164,9 @@ func serveWs(w http.ResponseWriter, r *http.Request) {
 		SessionId: u.String(),
 	}}
 	register <- client
-
 	// Allow collection of memory referenced by the caller by doing all work in
 	// new goroutines.
 	go client.writeMessage()
 	go client.readMessage()
-}
 
-func init() {
-	broadcast = make(chan []byte)
-	register = make(chan *Client)
-	unregister = make(chan *Client)
-	clients = make(map[*Client]bool)
 }
