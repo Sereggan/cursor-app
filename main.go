@@ -28,11 +28,10 @@ func serveHome(w http.ResponseWriter, r *http.Request) {
 func main() {
 	flag.Parse()
 	quit := make(chan bool)
-	hub := newHub()
-	go hub.run(quit)
+	go manageClients(quit)
 	http.HandleFunc("/", serveHome)
 	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
-		serveWs(hub, w, r)
+		serveWs(w, r)
 	})
 
 	go func() {

@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"github.com/gorilla/websocket"
 	uuid "github.com/nu7hatch/gouuid"
 	"log"
@@ -23,6 +24,15 @@ const (
 	maxMessageSize = 512
 )
 
+var (
+	broadcast  chan []byte
+	register   chan *Client
+	unregister chan *Client
+
+	// Registered clients.
+	clients map[*Client]bool
+)
+
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  128,
 	WriteBufferSize: 128,
@@ -30,13 +40,8 @@ var upgrader = websocket.Upgrader{
 
 // Client is a middleman between the websocket connection and the hub.
 type Client struct {
-	hub *Hub
-
 	// The websocket connection.
 	conn *websocket.Conn
-
-	// Buffered channel of outbound messages.
-	send chan []byte
 
 	clientData *ClientData
 }
@@ -51,7 +56,7 @@ type ClientData struct {
 // readMessage reads messages from the websocket connection to the hub.
 func (c *Client) readMessage() {
 	defer func() {
-		c.hub.unregister <- c
+		unregister <- c
 		c.conn.Close()
 	}()
 	c.conn.SetReadLimit(maxMessageSize)
@@ -70,10 +75,10 @@ func (c *Client) readMessage() {
 				Method:    "leave",
 			}
 			message, err = json.Marshal(data)
-			c.hub.broadcast <- message
-
+			broadcast <- message
 			break
 		}
+
 		data := ClientData{}
 		err = json.Unmarshal(message, &data)
 		if err != nil {
@@ -83,7 +88,7 @@ func (c *Client) readMessage() {
 		data.SessionId = c.clientData.SessionId
 		data.Method = "move"
 		message, err = json.Marshal(data)
-		c.hub.broadcast <- message
+		broadcast <- message
 	}
 }
 
@@ -96,7 +101,7 @@ func (c *Client) writeMessage() {
 	}()
 	for {
 		select {
-		case message, ok := <-c.send:
+		case message, ok := <-broadcast:
 			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if !ok {
 				// The hub closed the channel.
@@ -122,22 +127,46 @@ func (c *Client) writeMessage() {
 	}
 }
 
+func manageClients(quit <-chan bool) {
+	for {
+		select {
+		case client := <-register:
+			clients[client] = true
+		case client := <-unregister:
+			if _, ok := clients[client]; ok {
+				delete(clients, client)
+			}
+		case <-quit:
+			for c := range clients {
+				go func(client *Client) {
+					data := &ClientData{
+						SessionId: client.clientData.SessionId,
+						Method:    "leave",
+					}
+					message, _ := json.Marshal(data)
+					fmt.Println("Sent leave message for " + client.clientData.SessionId)
+					broadcast <- message
+				}(c)
+			}
+		}
+	}
+}
+
 // serveWs handles websocket requests from the peer.
-func serveWs(hub *Hub, w http.ResponseWriter, r *http.Request) {
+func serveWs(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Println(err)
 		return
 	}
 	u, err := uuid.NewV4()
-	client := &Client{hub: hub, conn: conn, send: make(chan []byte, 256), clientData: &ClientData{
+	client := &Client{conn: conn, clientData: &ClientData{
 		SessionId: u.String(),
 	}}
-	// Add new client to hub
-	client.hub.register <- client
-
+	register <- client
 	// Allow collection of memory referenced by the caller by doing all work in
 	// new goroutines.
 	go client.writeMessage()
 	go client.readMessage()
+
 }
